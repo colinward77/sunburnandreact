@@ -1,210 +1,137 @@
-// server.js
-const express = require('express');
-const session = require('express-session');
-const bodyParser = require('body-parser');
-const bcrypt = require('bcrypt');
-const axios = require('axios');
-const db = require('./db');
+// server.js  –  Express + DynamoDB (CommonJS)
 
-const app = express();
+const path          = require('path');
+const express       = require('express');
+const session       = require('express-session');
+const bodyParser    = require('body-parser');
+const bcrypt        = require('bcrypt');
+const axios         = require('axios');
+
+const {
+  createUser,
+  findUserByUsername,
+  getUserById
+} = require('./db.js');                    // ← Dynamo helpers
+
+const app  = express();
 const PORT = process.env.PORT || 3000;
 const WEATHERAPI_KEY = '3e02deef63a14dac964180134251004';
 
+/* ---------- middleware ---------- */
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
-app.use(
-  session({
-    secret: 'mySuperSecretKey',
-    resave: false,
-    saveUninitialized: false
-  })
-);
+app.use(session({
+  secret: 'mySuperSecretKey',
+  resave: false,
+  saveUninitialized: false
+}));
+app.use(express.static('public'));         // static assets (icons, css)
 
-// Serve static files (HTML, CSS, JS)
-app.use(express.static('public'));
-
-// ------------------ ROUTES ------------------ //
-
-// Home
-app.get('/', (req, res) => {
-  res.sendFile(__dirname + '/public/index.html');
+/* ---------- HTML pages (legacy) ---------- */
+app.get('/',        (_,res)=>res.sendFile(path.join(__dirname,'public','index.html')));
+app.get('/login',   (_,res)=>res.sendFile(path.join(__dirname,'views','login.html')));
+app.get('/register',(_,res)=>res.sendFile(path.join(__dirname,'views','register.html')));
+app.get('/dashboard',(req,res)=>{
+  if (!req.session?.userId) return res.redirect('/login');
+  res.sendFile(path.join(__dirname,'public','dashboard.html'));
 });
 
-// Login page
-app.get('/login', (req, res) => {
-  if (req.session?.userId) {
-    return res.redirect('/dashboard');
-  }
-  res.sendFile(__dirname + '/views/login.html');
-});
-
-// Register page
-app.get('/register', (req, res) => {
-  if (req.session?.userId) {
-    return res.redirect('/dashboard');
-  }
-  res.sendFile(__dirname + '/views/register.html');
-});
-
-// POST Register
+/* ---------- AUTH ---------- */
 app.post('/register', async (req, res) => {
   const { username, password, hairColor, eyeColor, skinType } = req.body;
   try {
-    const hashedPassword = await bcrypt.hash(password, 10);
-    db.run(
-      `INSERT INTO users (username, password, hairColor, eyeColor, skinType)
-       VALUES (?, ?, ?, ?, ?)`,
-      [username, hashedPassword, hairColor, eyeColor, skinType],
-      function (err) {
-        if (err) {
-          console.error(err);
-          return res.status(400).send('Username already taken or an error occurred');
-        }
-        req.session.userId = this.lastID; // Auto-login after registration
-        res.redirect('/dashboard');
-      }
-    );
-  } catch (err) {
-    console.error(err);
-    res.status(500).send('Server error during registration');
-  }
-});
+    if (await findUserByUsername(username))
+      return res.status(400).send('Username already taken');
 
-// POST Login
-app.post('/login', (req, res) => {
-  const { username, password } = req.body;
-  db.get(`SELECT * FROM users WHERE username = ?`, [username], async (err, user) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).send('Server error during login');
-    }
-    if (!user) {
-      return res.status(400).send('Invalid username or password');
-    }
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) {
-      return res.status(400).send('Invalid username or password');
-    }
-    req.session.userId = user.id;
+    const hash = await bcrypt.hash(password, 10);
+    const id   = await createUser({ username, password: hash, hairColor, eyeColor, skinType });
+    req.session.userId = id;                      // auto-login
     res.redirect('/dashboard');
-  });
-});
-
-// GET Dashboard
-app.get('/dashboard', (req, res) => {
-  if (!req.session?.userId) {
-    return res.redirect('/login');
+  } catch (e) {
+    console.error(e);
+    res.status(500).send('Registration error');
   }
-  res.sendFile(__dirname + '/public/dashboard.html');
 });
 
-// GET Logout
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const user = await findUserByUsername(username);
+    if (!user) return res.status(400).send('Invalid username or password');
+
+    const ok = await bcrypt.compare(password, user.password);
+    if (!ok)  return res.status(400).send('Invalid username or password');
+
+    req.session.userId = user.userID;            // Dynamo PK is userID
+    res.redirect('/dashboard');
+  } catch (e) {
+    console.error(e);
+    res.status(500).send('Login error');
+  }
+});
+
 app.get('/logout', (req, res) => {
   req.session.destroy();
   res.redirect('/');
 });
 
-// GET Current user data
-app.get('/api/user', (req, res) => {
-  if (!req.session?.userId) {
-    return res.status(401).send('Not logged in');
-  }
-  db.get(`SELECT * FROM users WHERE id = ?`, [req.session.userId], (err, row) => {
-    if (err) {
-      return res.status(500).send('Server error fetching user data');
-    }
-    if (!row) {
-      return res.status(404).send('User not found');
-    }
-    const { id, username, hairColor, eyeColor, skinType } = row;
-    res.json({ id, username, hairColor, eyeColor, skinType });
-  });
+/* ---------- Current user ---------- */
+app.get('/api/user', async (req, res) => {
+  if (!req.session?.userId) return res.status(401).send('Not logged in');
+  const user = await getUserById(req.session.userId);
+  if (!user) return res.status(404).send('User not found');
+
+  const { userID:id, username, hairColor, eyeColor, skinType } = user;
+  res.json({ id, username, hairColor, eyeColor, skinType });
 });
 
-/**
- * GET /api/weather-info
- * Expects ?lat=xx&lon=yy as query params from the client
- * Returns { username, uvIndex, temperature, cloudCoverage, cloudIconType, isDay }
- */
-app.get('/api/weather-info', (req, res) => {
-  if (!req.session?.userId) {
-    return res.status(401).send('Not logged in');
-  }
+/* ---------- Weather info (FIXED) ---------- */
+app.get('/api/weather-info', async (req, res) => {
+  if (!req.session?.userId) return res.status(401).send('Not logged in');
 
   const { lat, lon } = req.query;
-  if (!lat || !lon) {
-    return res.status(400).send('Missing lat/lon query parameters');
+  if (!lat || !lon) return res.status(400).send('Missing lat/lon query parameters');
+
+  try {
+    // 1) fetch user from DynamoDB
+    const user = await getUserById(req.session.userId);
+    if (!user) return res.status(404).send('User not found');
+
+    // 2) call WeatherAPI
+    const w = await axios.get('https://api.weatherapi.com/v1/current.json', {
+      params: { key: WEATHERAPI_KEY, q: `${lat},${lon}` }
+    });
+    const c = w.data.current;
+
+    const cloud = c.cloud;                       // 0-100
+    let icon    = 'partly';
+    if (cloud < 25)      icon = 'sun';
+    else if (cloud >=85) icon = 'cloud';
+
+    res.json({
+      username:       user.username,
+      uvIndex:        c.uv,
+      temperature:    c.temp_f,
+      cloudCoverage:  cloud,
+      cloudIconType:  icon,
+      isDay:          c.is_day === 1
+    });
+
+  } catch (err) {
+    console.error('Weather fetch error:', err.message);
+    res.status(500).send('Error fetching weather data');
   }
-
-  // 1) Fetch the user from DB for display of username
-  db.get(`SELECT * FROM users WHERE id = ?`, [req.session.userId], async (err, user) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).send('Server error fetching user data');
-    }
-    if (!user) {
-      return res.status(404).send('User not found');
-    }
-
-    try {
-      // 2) Call WeatherAPI to get the current weather for lat/lon
-      const weatherResponse = await axios.get('https://api.weatherapi.com/v1/current.json', {
-        params: {
-          key: WEATHERAPI_KEY,
-          q: `${lat},${lon}`
-        }
-      });
-
-      const current = weatherResponse.data.current;
-      const uvIndex = current.uv;
-      const temperature = current.temp_f; // Fahrenheit
-      const cloudCoverage = current.cloud; // integer (0-100)
-      const isDay = (current.is_day === 1);
-
-      // Decide which icon to show for clouds
-      let cloudIconType = 'partly';
-      if (cloudCoverage < 25) {
-        cloudIconType = 'sun';
-      } else if (cloudCoverage >= 85) {
-        cloudIconType = 'cloud';
-      }
-
-      // Return user name + weather
-      res.json({
-        username: user.username,
-        uvIndex,
-        temperature,
-        cloudCoverage,
-        cloudIconType,
-        isDay
-      });
-    } catch (error) {
-      console.error('Error calling WeatherAPI:', error.message);
-      res.status(500).send('Error fetching weather data');
-    }
-  });
 });
 
-/**
- * POST /api/sunburn-time
- * Body: { uvIndex, hairColor, eyeColor, skinType, cloudCoverage }
- * Returns: { sunburnTime } => in raw minutes
- */
+/* ---------- Sunburn estimator ---------- */
 app.post('/api/sunburn-time', (req, res) => {
-  if (!req.session?.userId) {
-    return res.status(401).send('Not logged in');
-  }
-  const { uvIndex, hairColor, eyeColor, skinType, cloudCoverage } = req.body;
+  if (!req.session?.userId) return res.status(401).send('Not logged in');
 
-  // Calculate & respond
+  const { uvIndex, hairColor, eyeColor, skinType, cloudCoverage } = req.body;
   const sunburnTime = estimateSunburnTime(uvIndex, hairColor, eyeColor, skinType, cloudCoverage);
   res.json({ sunburnTime });
 });
 
-/**
- * A more nuanced function that uses Fitzpatrick scale, cloud coverage, etc.
- * Returns time in minutes
- */
 function estimateSunburnTime(uvIndex, hairColor, eyeColor, skinType, cloudCoverage) {
   // Base time
   let baseTime = 15;
@@ -272,6 +199,7 @@ function estimateSunburnTime(uvIndex, hairColor, eyeColor, skinType, cloudCovera
   return Math.round(baseTime);
 }
 
+/* ---------- start server ---------- */
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
 });

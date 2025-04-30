@@ -1,27 +1,48 @@
-// db.js
-const sqlite3 = require('sqlite3').verbose();
+// db.js  – CommonJS Dynamo helper (userID version)
 
-const DB_PATH = './users.db'; // You can change the path as needed
+const { v4: uuid } = require('uuid');
+const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+const {
+  DynamoDBDocumentClient,
+  PutCommand,
+  GetCommand,
+  QueryCommand
+} = require('@aws-sdk/lib-dynamodb');
 
-// Initialize and export the database connection
-const db = new sqlite3.Database(DB_PATH, (err) => {
-  if (err) {
-    console.error('Could not connect to SQLite database', err);
-  } else {
-    console.log('Connected to SQLite database');
-  }
-});
+const TABLE          = 'userData2';          // your table name
+const USERNAME_INDEX = 'username-index';    // GSI created earlier
+const PK             = 'userID';            // <-- match partition-key name
 
-// Create 'users' table if it doesn't exist
-db.run(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE,
-    password TEXT,
-    hairColor TEXT,
-    eyeColor TEXT,
-    skinType TEXT
-  )
-`);
+const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
-module.exports = db;
+// ---------- helpers ----------
+async function createUser({ username, password, hairColor, eyeColor, skinType }) {
+  const userID = uuid();                    // variable now matches PK attribute
+  await doc.send(new PutCommand({
+    TableName: TABLE,
+    Item: { [PK]: userID, username, password, hairColor, eyeColor, skinType },
+    ConditionExpression: 'attribute_not_exists(username)'
+  }));
+  return userID;
+}
+
+async function findUserByUsername(username) {
+  const out = await doc.send(new QueryCommand({
+    TableName: TABLE,
+    IndexName: USERNAME_INDEX,
+    KeyConditionExpression: 'username = :u',
+    ExpressionAttributeValues: { ':u': username },
+    Limit: 1
+  }));
+  return out.Items?.[0] || null;
+}
+
+async function getUserById(userID) {
+  const out = await doc.send(new GetCommand({
+    TableName: TABLE,
+    Key: { [PK]: userID }
+  }));
+  return out.Item || null;
+}
+
+module.exports = { createUser, findUserByUsername, getUserById };
