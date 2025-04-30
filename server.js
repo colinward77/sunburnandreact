@@ -165,7 +165,7 @@ app.get('/api/weather-info', (req, res) => {
       let cloudIconType = 'partly';
       if (cloudCoverage < 25) {
         cloudIconType = 'sun';
-      } else if (cloudCoverage >= 75) {
+      } else if (cloudCoverage >= 85) {
         cloudIconType = 'cloud';
       }
 
