@@ -9,10 +9,10 @@ export default function Register() {
   });
   const [err, setErr] = useState('');
 
-  async function handleSubmit(e) {
+  async function handleSubmit(e) { 
     e.preventDefault();
     setErr('');
-    const res = await fetch('/register', {
+    const res = await fetch('/register', { //pass to server
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form)

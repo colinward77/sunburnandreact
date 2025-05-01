@@ -9,7 +9,7 @@ const {
   QueryCommand
 } = require('@aws-sdk/lib-dynamodb');
 
-const TABLE          = 'userData2';          // your table name
+const TABLE          = 'userData2';          // table name
 const USERNAME_INDEX = 'username-index';    // GSI created earlier
 const PK             = 'userID';            // <-- match partition-key name
 
@@ -17,7 +17,7 @@ const doc = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 
 // ---------- helpers ----------
 async function createUser({ username, password, hairColor, eyeColor, skinType }) {
-  const userID = uuid();                    // variable now matches PK attribute
+  const userID = uuid();                    // made sure pk matched, table set up wrong before
   await doc.send(new PutCommand({
     TableName: TABLE,
     Item: { [PK]: userID, username, password, hairColor, eyeColor, skinType },

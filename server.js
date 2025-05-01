@@ -18,7 +18,7 @@ const WEATHERAPI_KEY = "3e02deef63a14dac964180134251004"
 
 app.use(bodyParser.json());
 app.use(session({
-  secret: 'mySuperSecretKey',
+  secret: 'mySuperSecretKey', //not sure if needed, just random but works
   resave: false,
   saveUninitialized: false
 }));
