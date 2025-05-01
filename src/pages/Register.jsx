@@ -45,8 +45,12 @@ export default function Register() {
 
         <label>Fitzpatrick Skin Type
           <select value={form.skinType} onChange={h('skinType')}>
-            <option>I</option><option>II</option><option>III</option>
-            <option>IV</option><option>V</option><option>VI</option>
+            <option value="I">I — Very fair / pale white</option>
+            <option value="II">II — Fair / white</option>
+            <option value="III">III — Light olive / beige</option>
+            <option value="IV">IV — Moderate brown</option>
+            <option value="V">V — Dark brown</option>
+            <option value="VI">VI — Deeply pigmented dark brown / black</option>
           </select>
         </label>
 
