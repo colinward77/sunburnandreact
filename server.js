@@ -14,11 +14,11 @@ const {
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
-const WEATHERAPI_KEY = process.env.WEATHERAPI_KEY;
+const WEATHERAPI_KEY = "3e02deef63a14dac964180134251004"
 
 app.use(bodyParser.json());
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'changeMe',
+  secret: 'mySuperSecretKey',
   resave: false,
   saveUninitialized: false
 }));
